@@ -21,10 +21,7 @@ package org.sd.text.radixtree;
 
 import org.sd.util.tree.Tree;
 
-import java.util.ArrayList;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Queue;
+import java.util.*;
 
 
 /**
@@ -35,53 +32,56 @@ import java.util.Queue;
  * <p>
  * Ported from RadixTreeImpl by:
  * <p>
- * author Tahseen Ur Rehman 
+ * author Tahseen Ur Rehman
  * email: tahseen.ur.rehman {at.spam.me.not} gmail.com
  *
  * @author Spence Koehler
+ * @author Jeff Tsay
  */
-public class RadixTreeImpl<T> implements RadixTree<T> {
-  
-  private Tree<RadixData<T>> root;
+public class TokenRadixTreeImpl<T, V> implements TokenRadixTree<T, V> {
+
+  private Tree<TokenRadixData<T, V>> root;
 
   private long size;
 
   /**
    * Create a Radix Tree with only the default node root.
    */
-  public RadixTreeImpl() {
-    root = new Tree<RadixData<T>>(new RadixData<T>("", false, null));
+  public TokenRadixTreeImpl() {
+    root = new Tree<TokenRadixData<T, V>>(new TokenRadixData<T, V>(
+      Collections.<T>emptyList(), false, null));
     size = 0;
   }
-    
+
   /**
    * Get this tree's root.
    */
-  public Tree<RadixData<T>> getRoot() {
+  public Tree<TokenRadixData<T, V>> getRoot() {
     return root;
   }
 
   /**
    * Insert a new string key and its value to the tree. Throw an IllegalStateException
    * if there is a conflict.
-   * 
-   * @param key
-   *            The string key of the object
+   *
+   * @param tokens
+   *            The tokens of the object
    * @param value
    *            The value that need to be stored corresponding to the given
    *            key.
    */
-  public void insert(String key, T value) {
-    insert(key, value, null, null);
+  @Override
+  public void insert(List<T> tokens, V value) {
+    insert(tokens, value, null, null);
   }
 
   /**
    * Insert a new string key and its value to the tree. If there is already
    * a conflicting value at the insertion point, resolve by calling the
    * value merger function.
-   * 
-   * @param key
-   *            The string key of the object
+   *
+   * @param tokens
+   *            The tokens of the object
    * @param value
    *            The value that need to be stored corresponding to the given
    *            key.
@@ -97,32 +97,34 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
    *            that does change (i.e. when merged,) however, must be
    *            duplicated for proper function.
    */
-  public void insert(String key, T value, ValueMerger<T> valueMerger, ValueReplicator<T> valueReplicator) {
+  @Override
+  public void insert(List<T> tokens, V value, ValueWithTokensMerger<T, V> valueMerger, ValueReplicator<V> valueReplicator) {
     try {
-      insert(key, root, value, valueMerger, valueReplicator);
+      insert(tokens, root, value, valueMerger, valueReplicator);
     }
     catch (IllegalStateException e) {
       // re-throw the exception with 'key' in the message
-      throw new IllegalStateException("Duplicate key: '" + key + "'");
+      throw new IllegalStateException("Duplicate key: '" + tokens + "'");
     }
     size++;
   }
 
   /**
-   * Delete a key and its associated value from the tree.
-   * @param key The key of the node that need to be deleted
+   * Delete tokens and their associated value from the tree.
+   * @param tokens The tokens of the node that need to be deleted
    * @return true if deleted
    */
-  public boolean delete(String key) {
+  @Override
+  public boolean delete(List<T> tokens) {
     final boolean[] delete = new boolean[]{false};
 
-    final Visitor<T> visitor = new Visitor<T>() {
-
-      public void visit(String key, Tree<RadixData<T>> node) {
-        final Tree<RadixData<T>> parent = node.getParent();
+    final TokenTreeVisitor<T, V> visitor = new TokenTreeVisitor<T, V>() {
+      @Override
+      public void visit(List<T> tokens, Tree<TokenRadixData<T, V>> node) {
+        final Tree<TokenRadixData<T, V>> parent = node.getParent();
         if (parent == null) return;
 
-        final RadixData<T> data = node.getData();
+        final TokenRadixData<T, V> data = node.getData();
 
         delete[0] = data.isReal();
 
@@ -145,7 +147,7 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
             // itself
             mergeNodes(node, node.getChildren().get(0));
           }
-          else { // we jus need to mark the node as non real.
+          else { // we just need to mark the node as non-real.
             data.setReal(false);
           }
         }
@@ -154,53 +156,57 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
       /**
        * Merge a child into its parent node. Operation only valid if it is
        * only child of the parent node and parent node is not a real node.
-       * 
+       *
        * @param parent
        *            The parent Node
        * @param child
        *            The child Node
        */
-      private void mergeNodes(Tree<RadixData<T>> parent, Tree<RadixData<T>> child) {
-        final RadixData<T> parentData = parent.getData();
-        final RadixData<T> childData = child.getData();
+      private void mergeNodes(Tree<TokenRadixData<T, V>> parent, Tree<TokenRadixData<T, V>> child) {
+        final TokenRadixData<T, V> parentData = parent.getData();
+        final TokenRadixData<T, V> childData = child.getData();
 
-        parentData.setKey(parentData.getKey() + childData.getKey());
+        final List<T> updatedTokens = new ArrayList<T>(parentData.getTokens());
+        updatedTokens.addAll(childData.getTokens());
+
+        parentData.setTokens(updatedTokens);
         parentData.setReal(childData.isReal());
         parentData.setValue(childData.getValue());
 
         // delete the child, moving its children to the parent
-        final List<Tree<RadixData<T>>> children = child.getChildren();
+        final List<Tree<TokenRadixData<T, V>>> children = child.getChildren();
         child.prune(true, true);
         if (children != null) {
-          for (Tree<RadixData<T>> gchild : children) {
+          for (Tree<TokenRadixData<T, V>> gchild : children) {
             parent.addChild(gchild);
           }
         }
       }
     };
 
-    visit(key, visitor);
+    visit(tokens, visitor);
 
     if(delete[0]) {
-      size--;   
+      size--;
     }
-        
+
     return delete[0];
   }
 
   /**
-   * Find a value based on its corresponding key.
-   * 
-   * @param key The key for which to search the tree.
+   * Find a value based on its corresponding tokens.
+   *
+   * @param tokens The tokens for which to search the tree.
    * @return The value corresponding to the key. null if the key cannot be found.
    */
-  public T find(String key) {
-    final List<T> result = new ArrayList<T>();
+  @Override
+  public V find(List<T> tokens) {
+    final List<V> result = new ArrayList<V>();
 
-    final Visitor<T> visitor = new Visitor<T>() {
+    final TokenTreeVisitor<T, V> visitor = new TokenTreeVisitor<T, V>() {
 
-      public void visit(String key, Tree<RadixData<T>> node) {
-        final RadixData<T> data = node.getData();
+      public void visit(List<T> tokens, Tree<TokenRadixData<T, V>> node) {
+        final TokenRadixData<T, V> data = node.getData();
 
         if (data.isReal()) {
           result.add(data.getValue());
@@ -208,46 +214,46 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
       }
     };
 
-    visit(key, visitor);
+    visit(tokens, visitor);
 
     return result.size() == 1 ? result.get(0) : null;
   }
 
   /**
    * Check if the tree contains any entry corresponding to the given key.
-   * 
-   * @param key The key that needto be searched in the tree.
-   * @return retun true if the key is present in the tree otherwise false
+   *
+   * @param tokens The key that need to be searched in the tree.
+   * @return return true if the key is present in the tree otherwise false
    */
-  public boolean contains(String key) {
+  public boolean contains(List<T> tokens) {
     final boolean[] result = new boolean[]{false};
 
-    final Visitor<T> visitor = new Visitor<T>() {
+    final TokenTreeVisitor<T, V> visitor = new TokenTreeVisitor<T, V>() {
 
-      public void visit(String key, Tree<RadixData<T>> node) {
+      public void visit(List<T> tokens, Tree<TokenRadixData<T, V>> node) {
         result[0] = node.getData().isReal();
       }
     };
 
-    visit(key, visitor);
+    visit(tokens, visitor);
 
     return result[0];
   }
-    
+
   /**
    * Search for all the keys that start with given prefix. limiting the results based on the supplied limit.
-   * 
-   * @param key The prefix for which keys need to be search
+   *
+   * @param tokenPrefix The prefix for which keys need to be search
    * @param recordLimit The limit for the results
    * @return The list of values whose key start with the given prefix
    */
-  public List<T> searchPrefix(String key, int recordLimit) {
-    List<T> values = new ArrayList<T>();
+  public List<V> searchPrefix(List<T> tokenPrefix, int recordLimit) {
+    List<V> values = new ArrayList<V>();
 
-    Tree<RadixData<T>> node = searchPrefix(key, root);
+    Tree<TokenRadixData<T, V>> node = searchPrefix(tokenPrefix, root);
 
     if (node != null) {
-      final RadixData<T> nodeData = node.getData();
+      final TokenRadixData<T, V> nodeData = node.getData();
       if (nodeData.isReal()) {
         values.add(nodeData.getValue());
       }
@@ -265,13 +271,12 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
     return size;
   }
 
-
   /**
-   * Recursively insert the key in the radix tree.
-   * 
-   * @param key The key to be inserted
+   * Recursively insert the tokens in the radix tree.
+   *
+   * @param tokens The tokens to be inserted
    * @param node The current node
-   * @param value The value associated with the key 
+   * @param value The value associated with the key
    * @param valueMerger The function to use for conflicts. If null, conflicts
    *        cause an IllegalStateException to be thrown.
    * @pram valueReplicator
@@ -283,15 +288,18 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
    *            that does change (i.e. when merged,) however, must be
    *            duplicated for proper function.
    */
-  private void insert(String key, Tree<RadixData<T>> node, T value, ValueMerger<T> valueMerger, ValueReplicator<T> valueReplicator) {
-    int i = 0;
-    final int keylen = key.length();
-    final RadixData<T> nodeData = node.getData();
-    final int nodelen = nodeData.getKey().length();
-    final String nodeKey = nodeData.getKey();
+  private void insert(List<T> tokens, Tree<TokenRadixData<T, V>> node, V value, ValueWithTokensMerger<T, V> valueMerger, ValueReplicator<V> valueReplicator) {
+    final int keylen = tokens.size();
+    final TokenRadixData<T, V> nodeData = node.getData();
+    final List<T> nodeTokens = nodeData.getTokens();
+    final int nodelen = nodeTokens.size();
 
+    final Iterator<T> it = tokens.iterator();
+    final Iterator<T> nodeIt = nodeTokens.iterator();
+
+    int i = 0;
     while (i < keylen && i < nodelen) {
-      if (key.charAt(i) != nodeKey.charAt(i)) {
+      if (!it.next().equals(nodeIt.next())) {
         break;
       }
       i++;
@@ -299,22 +307,26 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
 
     // we are either at the root node
     // or we need to go down the tree
-    if ("".equals(nodeKey) || i == 0 || (i < keylen && i >= nodelen)) {
+    if ((i == 0) || (i < keylen && i >= nodelen)) {
       boolean flag = false;
-      final String newText = key.substring(i, keylen);
+      final List<T> newTokens = tokens.subList(i, keylen);
+
       if (node.hasChildren()) {
-        for (Tree<RadixData<T>> child : node.getChildren()) {
-          if (child.getData().getKey().startsWith(newText.charAt(0) + "")) {
+        final T headToken = newTokens.get(0);
+        for (Tree<TokenRadixData<T, V>> child : node.getChildren()) {
+          final List<T> childTokens = child.getData().getTokens();
+          if (!childTokens.isEmpty() &&
+              childTokens.get(0).equals(headToken)) {
             flag = true;
-            insert(newText, child, value, valueMerger, valueReplicator);
+            insert(newTokens, child, value, valueMerger, valueReplicator);
             break;
           }
         }
       }
 
       // just add the node as the child of the current node
-      if (flag == false) {
-        node.addChild(new RadixData<T>(newText, true, value));
+      if (!flag) {
+        node.addChild(new TokenRadixData<T, V>(newTokens, true, value));
       }
     }
 
@@ -336,20 +348,21 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
     // This node need to be split as the key to be inserted
     // is a prefix of the current node key
     else if (i > 0 && i < nodelen) {
-      Tree<RadixData<T>> n1 =
-        new Tree<RadixData<T>>(
-          new RadixData<T>(
-            nodeKey.substring(i, nodelen),
+      Tree<TokenRadixData<T, V>> n1 =
+        new Tree<TokenRadixData<T, V>>(
+          new TokenRadixData<T, V>(
+            nodeTokens.subList(i, nodelen),
             nodeData.isReal(),
             nodeData.getValue()));
 
       node.moveChildrenTo(n1);
-      nodeData.setKey(key.substring(0, i));
+      nodeData.setTokens(tokens.subList(0, i));
       nodeData.setReal(false);
       node.addChild(n1);  // note: node's value is now also in its child.
 
       if (i < keylen) {
-        node.addChild(new RadixData<T>(key.substring(i, keylen), true, value));
+        node.addChild(new TokenRadixData<T, V>(
+         tokens.subList(i, keylen), true, value));
 
         if (valueReplicator != null) {
           nodeData.setValue(valueReplicator.replicate(nodeData.getValue()));
@@ -360,27 +373,32 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
         nodeData.setValue(value);
         nodeData.setReal(true);
       }
-    }        
+    }
     // this key need to be added as the child of the current node
     else {
-      node.addChild(new RadixData<T>(nodeKey.substring(i, nodelen), nodeData.isReal(), nodeData.getValue()));
+      node.addChild(new TokenRadixData<T, V>(
+       nodeTokens.subList(i, nodelen), nodeData.isReal(),
+       nodeData.getValue()));
 
-      nodeData.setKey(key);
+      nodeData.setTokens(tokens);
       nodeData.setReal(true);
       nodeData.setValue(value);
     }
   }
 
-  private Tree<RadixData<T>> searchPrefix(String key, Tree<RadixData<T>> node) {
-    Tree<RadixData<T>> result = null;
+  private Tree<TokenRadixData<T, V>> searchPrefix(List<T> tokens, Tree<TokenRadixData<T, V>> node) {
+    Tree<TokenRadixData<T, V>> result = null;
     int i = 0;
-    final int keylen = key.length();
-    final RadixData nodeData = node.getData();
-    final String nodeKey = nodeData.getKey();
-    final int nodelen = nodeKey.length();
+    final int keylen = tokens.size();
+    final TokenRadixData<T, V> nodeData = node.getData();
+    final List<T> nodeTokens = nodeData.getTokens();
+    final int nodelen = nodeTokens.size();
+
+    final Iterator<T> it = tokens.iterator();
+    final Iterator<T> nodeIt = nodeTokens.iterator();
 
     while (i < keylen && i < nodelen) {
-      if (key.charAt(i) != nodeKey.charAt(i)) {
+      if (!it.next().equals(nodeIt.next())) {
         break;
       }
       i++;
@@ -389,12 +407,15 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
     if (i == keylen && i <= nodelen) {
       result = node;
     }
-    else if ((i < keylen && i >= nodelen) || nodeData.getKey().equals("")) {
+    else if ((i < keylen && i >= nodelen) || nodeData.getTokens().isEmpty()) {
       if (node.hasChildren()) {
-        String newText = key.substring(i, keylen);
-        for (Tree<RadixData<T>> child : node.getChildren()) {
-          if (child.getData().getKey().startsWith(newText.charAt(0) + "")) {
-            result = searchPrefix(newText, child);
+        List<T> newTokens = tokens.subList(i, keylen);
+        final T headToken = newTokens.get(0);
+        for (Tree<TokenRadixData<T, V>> child : node.getChildren()) {
+          final List<T> childTokens = child.getData().getTokens();
+          if (!childTokens.isEmpty() &&
+              childTokens.get(0).equals(headToken)) {
+            result = searchPrefix(newTokens, child);
             break;
           }
         }
@@ -404,16 +425,16 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
     return result;
   }
 
-  private void getNodes(Tree<RadixData<T>> parent, List<T> keys, int limit) {
+  private void getNodes(Tree<TokenRadixData<T, V>> parent, List<V> keys, int limit) {
     if (!parent.hasChildren()) return;
 
-    final Queue<Tree<RadixData<T>>> queue = new LinkedList<Tree<RadixData<T>>>();
+    final Queue<Tree<TokenRadixData<T, V>>> queue = new LinkedList<Tree<TokenRadixData<T, V>>>();
 
     queue.addAll(parent.getChildren());
 
     while (!queue.isEmpty()) {
-      final Tree<RadixData<T>> node = queue.remove();
-      final RadixData<T> nodeData = node.getData();
+      final Tree<TokenRadixData<T, V>> node = queue.remove();
+      final TokenRadixData<T, V> nodeData = node.getData();
       if (nodeData.isReal()) {
         keys.add(nodeData.getValue());
       }
@@ -429,37 +450,41 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
   }
 
   /**
-   * visit the node whose key matches the given key
-   * @param key The key that need to be visited
+   * visit the node whose tokens matches the given tokens
+   * @param tokens The tokens that need to be visited
    * @param visitor The visitor object
    */
-  public void visit(String key, Visitor<T> visitor) {
-    if (root != null)
-      visit(key, visitor, root);
+  public void visit(List<T> tokens, TokenTreeVisitor<T, V> visitor) {
+    if (root != null) {
+      visit(tokens, visitor, root);
+    }
   }
 
   /**
-   * recursively visit the tree based on the supplied "key". calls the Visitor
+   * recursively visit the tree based on the supplied "key". calls the TokenTreeVisitor
    * for the node whose key matches the given prefix
-   * 
-   * @param prefix
-   *            The key or prefix to search in the tree
+   *
+   * @param tokensPrefix
+   *            The token prefix (or entire token list) to search in the tree
    * @param visitor
-   *            The Visitor that will be called if a node with "key" as its
+   *            The TokenTreeVisitor that will be called if a node with "key" as its
    *            key is found
    * @param node
    *            The Node from where onward to search
    */
-  private void visit(String prefix, Visitor<T> visitor, Tree<RadixData<T>> node) {
-    int i = 0;
-    final int keylen = prefix.length();
-    final RadixData nodeData = node.getData();
-    final String nodeKey = nodeData.getKey();
-    final int nodelen = nodeKey.length();
+  private void visit(List<T> tokensPrefix, TokenTreeVisitor<T, V> visitor, Tree<TokenRadixData<T, V>> node) {
+    final int keylen = tokensPrefix.size();
+    final TokenRadixData<T, V> nodeData = node.getData();
+    final List<T> nodeTokens = nodeData.getTokens();
+    final int nodelen = nodeTokens.size();
 
     // match the prefix with node key
+    final Iterator<T> it = tokensPrefix.iterator();
+    final Iterator<T> nodeIt = nodeTokens.iterator();
+
+    int i = 0;
     while (i < keylen && i < nodelen) {
-      if (prefix.charAt(i) != nodeKey.charAt(i)) {
+      if (!it.next().equals(nodeIt.next())) {
         break;
       }
       i++;
@@ -467,52 +492,23 @@ public class RadixTreeImpl<T> implements RadixTree<T> {
 
     // if the node key and prefix match, we found a match!
     if (i == keylen && i == nodelen) {
-      visitor.visit(prefix, node);
+      visitor.visit(tokensPrefix, node);
     }
-    else if ("".equals(nodeKey) || // either we are at the root
-             (i < keylen && i >= nodelen)) { // OR we need to traverse the children
+    else if ((i < keylen && i >= nodelen) || // either we need to traverse the children
+             nodeTokens.isEmpty()) { // OR we are at the root
       if (node.hasChildren()) {
-        String newText = prefix.substring(i, keylen);
-        for (Tree<RadixData<T>> child : node.getChildren()) {
+        final List<T> newTokens = tokensPrefix.subList(i, keylen);
+        final T headToken = newTokens.get(0);
+
+        for (Tree<TokenRadixData<T, V>> child : node.getChildren()) {
           // recursively search the child nodes
-          if (child.getData().getKey().startsWith(newText.charAt(0) + "")) {
-            visit(newText, visitor, child);
+          final List<T> childTokens = child.getData().getTokens();
+          if (!childTokens.isEmpty() &&
+              childTokens.get(0).equals(headToken)) {
+            visit(newTokens, visitor, child);
             break;
           }
         }
-      }
-    }
-  }
-    
-
-  /**
-   * Display the Trie on console. WARNING! Do not use for large Trie. For
-   * testing purpose only.
-   */
-  @Deprecated
-  public void display() {
-    display(0, root);
-  }
-
-  @Deprecated
-  private void display(int level, Tree<RadixData<T>> node) {
-    for (int i = 0; i < level; i++) {
-      System.out.print(" ");
-    }
-    System.out.print("|");
-    for (int i = 0; i < level; i++) {
-      System.out.print("-");
-    }
-
-    final RadixData nodeData = node.getData();
-    if (nodeData.isReal() == true)
-      System.out.println(nodeData.getKey() + "[" + nodeData.getValue() + "]*");
-    else
-      System.out.println(nodeData.getKey());
-
-    if (node.hasChildren()) {
-      for (Tree<RadixData<T>> child : node.getChildren()) {
-        display(level + 1, child);
       }
     }
   }

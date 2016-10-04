@@ -18,29 +18,24 @@
 */
 package org.sd.text.radixtree;
 
+import java.util.List;
+
+import org.sd.util.tree.Tree;
 
 /**
- * An interface for duplicating an instance of a value for placement
- * into nodes inserted for splits.
+ * Visitor interface used by {@link RadixTreeImpl} for performing tasks
+ * on a searched node.
  * <p>
- * When a node is split, the existing node is inserted under a new
- * node who shares the existing node's value before receiving a new
- * child. Replicators are called to duplicate that value into the
- * new node.
- * <p>
- * A replicator is not necessary for immutable values, but is essential
- * for proper function with values that contain changing state, which
- * is often the case with values that "merge".
- *
  * @author Spence Koehler
  */
-public interface ValueReplicator<V> {
-  
+public interface TokenTreeVisitor<T, V> {
+
   /**
-   * Replicate the given value to place in the new "parent"
-   * of a node containing the value created while splitting.
+   * This method gets called by @link{TokenRadixTreeImpl#visit(List&lt;T&gt;, TokenTreeVisitor)}
+   * when it finds a node matching the tokens given to it.
    *
-   * @param value      The value to be replicated.
+   * @param tokens The tokens that got matched
+   * @param node The matching node
    */
-  public V replicate(V value);
+  public void visit(List<T> tokens, Tree<TokenRadixData<T, V>> node);
 }

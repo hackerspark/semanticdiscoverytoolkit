@@ -21,83 +21,75 @@ package org.sd.text.radixtree;
 
 import org.sd.util.tree.Tree;
 
-import java.util.ArrayList;
-import java.util.BitSet;
-import java.util.Collections;
-import java.util.Comparator;
-import java.util.HashMap;
-import java.util.HashSet;
-import java.util.LinkedList;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
 
 /**
- * Implementation of a generalized suffix tree using a radix tree.
+ * Implementation of a generalized suffix tree for tokens using a radix tree.
  * <p>
- * A generalized suffix tree builds a trie of a set of strings and
- * all of their substrings. It can be used to find the longest common
- * substrings in O(N) where N is the sum of the lengths of the strings.
+ * A generalized suffix tree builds a trie of a set of tokenLists and
+ * all of their subsequences. It can be used to find the longest common
+ * subsequences in O(N) where N is the sum of the lengths of the tokenLists.
  *
  * @author Spence Koehler
+ * @author Jeff Tsay
+ *
  */
-public class GeneralizedSuffixTree {
+public class TokenGeneralizedSuffixTree<T> {
 
-  public static final String EOS = "$";
+  private ArrayList<List<T>> tokenLists;
+  private TokenRadixTreeImpl<T, SuffixData> suffixTree;
+  private EosStrategy<T> eosStrategy;
 
+  private List<Set<Tree<TokenRadixData<T, SuffixData>>>> _leavesByString;
 
-  private String[] strings;
-  private RadixTreeImpl<SuffixData> suffixTree;
-  private String eosMarker;
-
-  private List<Set<Tree<RadixData<SuffixData>>>> _leavesByString;
-
-  private static final ValueMerger<SuffixData> VALUE_MERGER = new ValueMerger<SuffixData>() {
-    public void merge(RadixData<SuffixData> existingData, SuffixData newValue) {
+  private final ValueWithTokensMerger<T, SuffixData> VALUE_MERGER = new ValueWithTokensMerger<T, SuffixData>() {
+    public void merge(TokenRadixData<T, SuffixData> existingData, SuffixData newValue) {
       final SuffixData existingSuffixData = existingData.getValue();
       existingSuffixData.incorporate(newValue);
     }
   };
 
-  private static final ValueReplicator<SuffixData> VALUE_REPLICATOR = new ValueReplicator<SuffixData>() {
+  private final ValueReplicator<SuffixData> VALUE_REPLICATOR = new ValueReplicator<SuffixData>() {
     public SuffixData replicate(SuffixData value) {
       return value.replicate();
     }
   };
 
-  /**
-   * Construct with the given set of strings.
-   */
-  public GeneralizedSuffixTree(String[] strings) {
-    this(strings, EOS);
-  }
+  public TokenGeneralizedSuffixTree(List<List<T>> tokenLists, EosStrategy<T> eosStrategy) {
+    this.tokenLists = new ArrayList<List<T>>(tokenLists);
+    this.eosStrategy = eosStrategy;
+    this.suffixTree = new TokenRadixTreeImpl<T, SuffixData>();
 
-  public GeneralizedSuffixTree(String[] strings, String eosMarker) {
-    this.strings = strings;
-    this.eosMarker = eosMarker;
-    this.suffixTree = new RadixTreeImpl<SuffixData>();
-
-    for (int i = 0; i < strings.length; ++i) {
-      final String string = strings[i];
-      final int len = string.length();
+    for (int i = 0; i < tokenLists.size(); ++i) {
+      final List<T> tokenList = tokenLists.get(i);
+      final int len = tokenList.size();
 
       for (int j = 0; j < len; ++j) {
-        final String suffix = (j == 0) ? string + eosMarker + i: string.substring(j) + eosMarker;
+        List<T> suffix;
+
+        if (j == 0) {
+          suffix = new LinkedList<T>(tokenList);
+          suffix.add(eosStrategy.createEos(i));
+        } else {
+          suffix = makeTokenSubsequence(tokenList, j, len);
+          suffix.add(eosStrategy.createEos(-1));
+        }
+
         suffixTree.insert(suffix, new SuffixData(i, j), VALUE_MERGER, VALUE_REPLICATOR);
       }
     }
   }
-  
-  public Set<String> longestSubstrs() {
-    return longestSubstrs(1);
+
+  public Set<List<T>> longestSubsequence() {
+    return longestSubsequence(1);
   }
 
-  public Set<String> longestSubstrs(int minSize) {
+  public Set<List<T>> longestSubsequence(int minSize) {
 
     if (minSize <= 1) minSize = 1;
 
     final PathContainer pathContainer = new PathContainer(suffixTree);
-    final Set<String> result = pathContainer.collectLongest(minSize);
+    final Set<List<T>> result = pathContainer.collectLongest(minSize);
 
     return result;
   }
@@ -105,41 +97,65 @@ public class GeneralizedSuffixTree {
   /**
    * Clip the eos marker from the end of the string.
    */
-  private final String clip(String string, int startPos) {
-    int eosPos = string.lastIndexOf(eosMarker);
-    if (eosPos < 0) eosPos = string.length();
-    return string.substring(startPos, eosPos);
+  private final List<T> clip(List<T> tokens, int startPos) {
+    final int len = tokens.size();
+    if (len == 0) {
+      return makeTokenSubsequence(tokens, startPos, len);
+    }
+
+    final int lastIndex = len - 1;
+    final T lastToken = tokens.get(lastIndex);
+
+    if (eosStrategy.isEos(lastToken)) {
+      return makeTokenSubsequence(tokens, startPos, lastIndex);
+    }
+
+    return makeTokenSubsequence(tokens, startPos, len);
   }
 
+  // TODO: return a view
+  private final List<T> makeTokenSubsequence(List<T> tokens, int startIndex, int endIndex) {
+    final LinkedList<T> rv = new LinkedList<T>();
+    final Iterator<T> it = tokens.listIterator(startIndex);
+
+    for (int i = startIndex; i < endIndex; i++) {
+      rv.add(it.next());
+    }
+
+    return rv;
+  }
 
   public final class SuffixData {
-    public final int stringIndex;
-    public final int substrStartIndex;
+    public final int tokensIndex;
+    public final int sequenceStartIndex;
     private List<SuffixData> shared;  // other data's sharing space with this node.
 
-    public SuffixData(int stringIndex, int substrStartIndex) {
-      this.stringIndex = stringIndex;
-      this.substrStartIndex = substrStartIndex;
+    public SuffixData(int tokensIndex, int sequenceStartIndex) {
+      this.tokensIndex = tokensIndex;
+      this.sequenceStartIndex = sequenceStartIndex;
       this.shared = null;
     }
 
     /** Copy self */
     public SuffixData replicate() {
-      final SuffixData result = new SuffixData(stringIndex, substrStartIndex);
+      final SuffixData result = new SuffixData(tokensIndex, sequenceStartIndex);
       result.incorporateShared(shared);
       return result;
     }
 
-    public String getSourceString() {
-      return strings[stringIndex];
+    public List<T> getSourceTokens() {
+      return tokenLists.get(tokensIndex);
     }
 
-    public String getString(int depth) {
-      return strings[stringIndex].substring(substrStartIndex, substrStartIndex + depth);
+    public List<T> getSubsequenceAtDepth(int depth) {
+      return makeTokenSubsequence(tokenLists.get(tokensIndex), sequenceStartIndex,
+        sequenceStartIndex + depth);
     }
 
-    public String getSuffix() {
-      return substrStartIndex == 0 ? strings[stringIndex] : strings[stringIndex].substring(substrStartIndex);
+    public List<T> getSuffix() {
+      final List<T> tokens = tokenLists.get(tokensIndex);
+      return sequenceStartIndex == 0 ? tokens :
+        makeTokenSubsequence(tokens, sequenceStartIndex, tokens.size());
     }
 
     public void incorporate(SuffixData other) {
@@ -165,7 +181,7 @@ public class GeneralizedSuffixTree {
     public String toString() {
       final StringBuilder result = new StringBuilder();
 
-      result.append(stringIndex).append(':').append(substrStartIndex);
+      result.append(tokensIndex).append(':').append(sequenceStartIndex);
       if (shared != null) {
         for (SuffixData sharedData : shared) {
           result.append(',').append(sharedData.toString());
@@ -178,17 +194,17 @@ public class GeneralizedSuffixTree {
 
   private final class PathContainer {
 
-    public final Map<Tree<RadixData<SuffixData>>, PathElement> node2pathElt;
-    public final List<Tree<RadixData<SuffixData>>> leaves;
+    public final Map<Tree<TokenRadixData<T, SuffixData>>, PathElement> node2pathElt;
+    public final List<Tree<TokenRadixData<T, SuffixData>>> leaves;
     public final List<Path> paths;
 
-    PathContainer(RadixTreeImpl<SuffixData> suffixTree) {
-      this.node2pathElt = new HashMap<Tree<RadixData<SuffixData>>, PathElement>();
+    PathContainer(TokenRadixTreeImpl<T, SuffixData> suffixTree) {
+      this.node2pathElt = new HashMap<Tree<TokenRadixData<T, SuffixData>>, PathElement>();
       this.leaves = suffixTree.getRoot().gatherLeaves();
       this.paths = new ArrayList<Path>();
 
       // create all paths
-      for (Tree<RadixData<SuffixData>> leaf : leaves) {
+      for (Tree<TokenRadixData<T, SuffixData>> leaf : leaves) {
         paths.add(new Path(leaf, node2pathElt));
       }
 
@@ -198,15 +214,15 @@ public class GeneralizedSuffixTree {
       }
     }
 
-    public Set<String> collectLongest(int minSize) {
+    public Set<List<T>> collectLongest(int minSize) {
 
-      final Set<String> result = new HashSet<String>();
+      final Set<List<T>> result = new HashSet<List<T>>();
 
       final Map<BitSet, PathElementSet> participants2pathElts = new HashMap<BitSet, PathElementSet>();
       for (Path path : paths) path.collectLongest(participants2pathElts);
 
       // now we want to have each participant's best contribution from the largest group
-      // map each participant to its longest strings with the most contributors, next most, ... least.
+      // map each participant to its longest tokenLists with the most contributors, next most, ... least.
       // define "best" as that with the most contributors and size >= minSize
 
       final Map<Integer, ContributionLevels> participant2clevels = createContributionLevels(participants2pathElts);
@@ -214,7 +230,7 @@ public class GeneralizedSuffixTree {
       for (Map.Entry<Integer, ContributionLevels> entry : participant2clevels.entrySet()) {
         final Integer participant = entry.getKey();
         final ContributionLevels clevels = entry.getValue();
-        
+
         clevels.getBestKeys(minSize, result);
       }
 
@@ -232,7 +248,7 @@ public class GeneralizedSuffixTree {
         for (int participant = participants.nextSetBit(0); participant >= 0; participant = participants.nextSetBit(participant + 1)) {
           updateContributionLevels(participant, numParticipants, pathEltSet, result);
         }
-      }      
+      }
 
       return result;
     }
@@ -272,7 +288,7 @@ public class GeneralizedSuffixTree {
       }
     }
 
-    public void getBestKeys(int minSize, Set<String> results) {
+    public void getBestKeys(int minSize, Set<List<T>> results) {
 
       //
       // get the first level's keys at or above minSize with the most participants
@@ -323,7 +339,7 @@ public class GeneralizedSuffixTree {
       }
     }
 
-    public void getKeys(Set<String> results) {
+    public void getKeys(Set<List<T>> results) {
       pathEltSet.getKeys(results);
     }
 
@@ -343,12 +359,12 @@ public class GeneralizedSuffixTree {
     /**
      * Construct this path.
      */
-    Path(Tree<RadixData<SuffixData>> leaf, Map<Tree<RadixData<SuffixData>>, PathElement> node2pathElt) {
+    Path(Tree<TokenRadixData<T, SuffixData>> leaf, Map<Tree<TokenRadixData<T, SuffixData>>, PathElement> node2pathElt) {
       this.pathElements = new LinkedList<PathElement>();
 
       // create the path from leaf to root
       PathElement childElt = null; // the path element of the child of the current node.
-      for (Tree<RadixData<SuffixData>> node = leaf; node != null; node = node.getParent()) {
+      for (Tree<TokenRadixData<T, SuffixData>> node = leaf; node != null; node = node.getParent()) {
         PathElement pathElt = node2pathElt.get(node);
         if (pathElt == null) {
           pathElt = new PathElement(node, childElt);
@@ -380,7 +396,7 @@ public class GeneralizedSuffixTree {
       for (int i = pathElements.size() - 1; i >= 0; --i) {
         final PathElement pathElt = pathElements.get(i);
         final BitSet curParticipants = pathElt.getParticipants();
-        
+
         PathElementSet curMapping = participants2pathElts.get(curParticipants);
         if (curMapping == null) {
           participants2pathElts.put(curParticipants, new PathElementSet(pathElt));
@@ -397,7 +413,7 @@ public class GeneralizedSuffixTree {
 
       for (PathElement pathElt : pathElements) {
         if (result.length() > 0) result.append('-');
-        result.append(pathElt.node.getData().getKey());
+        result.append(pathElt.node.getData().getTokens());
       }
 
       return result.toString();
@@ -406,14 +422,14 @@ public class GeneralizedSuffixTree {
 
   private final class PathElement {
 
-    private Tree<RadixData<SuffixData>> node;
+    private Tree<TokenRadixData<T, SuffixData>> node;
     private int depth;
     private BitSet participants;
     private boolean finalized;
-    private String key;
+    private List<T> key;
     private int contribLen;
 
-    PathElement(Tree<RadixData<SuffixData>> node, PathElement childElt) {
+    PathElement(Tree<TokenRadixData<T, SuffixData>> node, PathElement childElt) {
       this.node = node;
       this.participants = new BitSet();
       incorporate(childElt);
@@ -422,11 +438,11 @@ public class GeneralizedSuffixTree {
       // set this node's participant.
       final SuffixData suffixData = node.getData().getValue();
       if (suffixData != null) {
-        participants.set(suffixData.stringIndex);
+        participants.set(suffixData.tokensIndex);
         final List<SuffixData> shared = suffixData.getShared();
         if (shared != null) {
           for (SuffixData sharedData : shared) {
-            participants.set(sharedData.stringIndex);
+            participants.set(sharedData.tokensIndex);
           }
         }
       }
@@ -448,12 +464,13 @@ public class GeneralizedSuffixTree {
     void finalizeElt(PathElement parent) {
       if (!finalized) {
         if (parent == null) {
-          key = "";
+          key = Collections.<T>emptyList();
         }
         else {
-          final String curKey = clip(node.getData().getKey(), 0);
-          contribLen += curKey.length();
-          key = parent.key + curKey;
+          final List<T> curKey = clip(node.getData().getTokens(), 0);
+          contribLen += curKey.size();
+          key = new LinkedList<T>(parent.key);
+          key.addAll(curKey);
         }
       }
     }
@@ -468,7 +485,7 @@ public class GeneralizedSuffixTree {
     /**
      * Get this element's key (available after finalized).
      */
-    public String getKey() {
+    public List<T> getKey() {
       return key;
     }
 
@@ -488,7 +505,7 @@ public class GeneralizedSuffixTree {
     }
 
     public String toString() {
-      return key;
+      return key.toString();
     }
   }
 
@@ -499,7 +516,7 @@ public class GeneralizedSuffixTree {
 
     PathElementSet(PathElement pathElt) {
       this.pathElts = new HashSet<PathElement>();
-      this.keyLen = pathElt.getKey().length();
+      this.keyLen = pathElt.getKey().size();
       pathElts.add(pathElt);
     }
 
@@ -508,7 +525,7 @@ public class GeneralizedSuffixTree {
      * resetting if longer.
      */
     void add(PathElement pathElt) {
-      final int curLen = pathElt.getKey().length();
+      final int curLen = pathElt.getKey().size();
       if (curLen == keyLen) {
         pathElts.add(pathElt);
       }
@@ -523,7 +540,7 @@ public class GeneralizedSuffixTree {
       return keyLen;
     }
 
-    public void getKeys(Set<String> results) {
+    public void getKeys(Set<List<T>> results) {
       for (PathElement pathElt : pathElts) {
         results.add(pathElt.getKey());
       }
@@ -534,13 +551,5 @@ public class GeneralizedSuffixTree {
       result.append(keyLen).append(pathElts);
       return result.toString();
     }
-  }
-
-
-  public static final void main(String[] args) {
-    final GeneralizedSuffixTree gst = new GeneralizedSuffixTree(args);
-    final Set<String> result = gst.longestSubstrs(1);
-
-    System.out.println(result);
   }
 }

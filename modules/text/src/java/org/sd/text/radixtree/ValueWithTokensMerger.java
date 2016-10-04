@@ -20,27 +20,21 @@ package org.sd.text.radixtree;
 
 
 /**
- * An interface for duplicating an instance of a value for placement
- * into nodes inserted for splits.
+ * An interface for resolving conflicts while building a radix tree.
  * <p>
- * When a node is split, the existing node is inserted under a new
- * node who shares the existing node's value before receiving a new
- * child. Replicators are called to duplicate that value into the
- * new node.
- * <p>
- * A replicator is not necessary for immutable values, but is essential
- * for proper function with values that contain changing state, which
- * is often the case with values that "merge".
+ * This will be called in the event that there is an exact match to
+ * an existing "real" node being added to the trie.
  *
  * @author Spence Koehler
  */
-public interface ValueReplicator<V> {
-  
+public interface ValueWithTokensMerger<T, V> {
+
   /**
-   * Replicate the given value to place in the new "parent"
-   * of a node containing the value created while splitting.
+   * Merge the new value into the existing data or throw an
+   * IllegalStateException if not possible.
    *
-   * @param value      The value to be replicated.
+   * @param existingData  The radix data on the existing node.
+   * @param newValue      The new conflicting value to be added.
    */
-  public V replicate(V value);
+  public void merge(TokenRadixData<T, V> existingData, V newValue);
 }
